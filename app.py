@@ -18,15 +18,13 @@ DB_PATH = "alma_paid.db"
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 conn.row_factory = sqlite3.Row
 
-# --- FUNCIONES AUXILIARES ---
+# --- AUXILIARES BD ---
 def load_all_students():
-    """Devuelve lista de sqlite3.Row con campos id, name, email, dni, status."""
     cur = conn.cursor()
     cur.execute("SELECT id, name, email, dni, status FROM students;")
     return cur.fetchall()
 
 def load_courses_for_student(student_id: int):
-    """Devuelve lista de tuplas (title, monthly_fee) para un alumno."""
     cur = conn.cursor()
     cur.execute("""
         SELECT c.title, c.monthly_fee
@@ -36,13 +34,17 @@ def load_courses_for_student(student_id: int):
     """, (student_id,))
     return cur.fetchall()
 
+# --- CÁLCULO DE RECARGO ---
 def calculate_due(subtotal: float, today: datetime.date):
     """
-    Aplica recargo fijo de 2000 a partir del 10 de cada mes.
-    (Ajusta fecha de corte si prefieres otro día).
+    Aplica un recargo fijo de $2000 sólo si hoy >= 10 de junio de 2025.
+    Antes de esa fecha, recargo = 0.
     """
-    cutoff = datetime.date(today.year, today.month, 10)
-    surcharge = 2000.0 if today >= cutoff else 0.0
+    cutoff = datetime.date(2025, 6, 10)
+    if today >= cutoff:
+        surcharge = 2000.0
+    else:
+        surcharge = 0.0
     return surcharge, subtotal + surcharge
 
 # --- MERCADO PAGO SDK ---
@@ -59,18 +61,17 @@ def create_mp_preference(ref: str, total: float):
     return resp["response"]["init_point"]
 
 # --- DETECTAR PAGO RETORNADO ---
-params = st.experimental_get_query_params()
+params = st.query_params
 if params.get("paid") and params.get("ref"):
     st.success("¡Pago recibido! Gracias por tu operación.")
 
-# --- INTERFAZ DE BÚSQUEDA ---
+# --- INTERFAZ DE BÚSQUEDA Y PAGO ---
 term = st.text_input("Buscá por nombre, DNI, email o estado:")
 if term:
     term_l = term.lower()
     students = load_all_students()
     matches = []
     for s in students:
-        # Concatenamos todos los campos y buscamos coincidencia parcial
         vals = []
         for col in ("name","dni","email","status"):
             v = s[col]
@@ -92,7 +93,7 @@ if term:
     else:
         s = matches[0]
         st.write(f"Hola, **{s['name']}**" + (f" (DNI: {s['dni']})" if s["dni"] else ""))
-        # Cargamos cursos y fees
+
         courses = load_courses_for_student(s["id"])
         if not courses:
             st.warning("Este alumno no tiene cursos inscriptos.")
@@ -101,7 +102,6 @@ if term:
             today = datetime.date.today()
             surcharge, total = calculate_due(subtotal, today)
 
-            # Mostrar detalle de cada curso
             st.markdown("**Detalle de cursos:**")
             for title, fee in courses:
                 st.write(f"- {title}: $ {fee:.2f}")
@@ -132,5 +132,6 @@ if term:
                 )
             else:
                 st.warning("⚠️ CBU_ALIAS no configurado en secrets.toml.")
+
 
 
