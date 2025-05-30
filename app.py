@@ -2,18 +2,17 @@ import os
 import streamlit as st
 import datetime
 import sqlite3
-import mercadopago
 
-# --- CONFIGURACIÓN (leer de st.secrets o manualmente) ---
-MP_ACCESS_TOKEN = st.secrets.get("MP_ACCESS_TOKEN", "")
-CBU_ALIAS       = st.secrets.get("CBU_ALIAS", "")
-BASE_URL        = st.secrets.get("BASE_URL", "")
+# --- CONFIGURACIÓN MANUAL PARA DEMO ---
+# (Ya no usamos SDK real; devolvemos un link de ejemplo)
+CBU_ALIAS = "CASINO.RED.GRITO"
+BASE_URL  = "https://tu-app-demo.streamlit.app"
 
 # --- LOGO ---
 st.image("logo.png", width=200)
-st.title("AlmaPaid – Pago de Talleres")
+st.title("AlmaPaid – Pago de Talleres (Demo)")
 
-# --- BD ---
+# --- CONEXIÓN A BD ---
 DB_PATH = "alma_paid.db"
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 conn.row_factory = sqlite3.Row
@@ -40,35 +39,17 @@ def calculate_due(subtotal: float, today: datetime.date):
     surcharge = 2000.0 if today >= cutoff else 0.0
     return surcharge, subtotal + surcharge
 
-# --- MERCADO PAGO SDK ---
-mp_sdk = None
-if MP_ACCESS_TOKEN:
-    mp_sdk = mercadopago.SDK(MP_ACCESS_TOKEN)
-
-# --- PREFERENCIA MP ---
-def create_mp_preference(ref: str, total: float):
-    payload = {
-        "items": [{"title": f"Pago {ref}", "quantity":1, "unit_price": total}],
-        "external_reference": ref,
-        "back_urls": {"success": f"{BASE_URL}?ref={ref}&paid=true"},
-        "auto_return": "approved",
-    }
-    pref = mp_sdk.preference().create(payload)
-    # manejar sandbox y production
-    resp = pref.get("response", {}) or {}
-    link = resp.get("init_point") or resp.get("sandbox_init_point")
-    if not link:
-        st.error("No se pudo obtener el enlace de pago de Mercado Pago.")
-        st.write(resp)
-        return None
-    return link
+# --- GENERADOR DE LINK DE PAGO DEMO ---
+def create_demo_link(ref: str, total: float):
+    # Para demo simplemente devolvemos un enlace ficticio que incluye ref y total
+    return f"{BASE_URL}/pay?ref={ref}&amount={int(total)}"
 
 # --- DETECTAR PAGO RETORNADO ---
 params = st.query_params
 if params.get("paid") and params.get("ref"):
-    st.success("¡Pago recibido! Gracias por tu operación.")
+    st.success("¡Pago recibido! (Demo)")
 
-# --- UI BÚSQUEDA Y PAGO ---
+# --- INTERFAZ DE BÚSQUEDA Y PAGO ---
 term = st.text_input("Buscá por nombre, DNI, email o estado:")
 if term:
     term_l = term.lower()
@@ -91,7 +72,7 @@ if term:
             st.write(line)
     else:
         s = matches[0]
-        st.write(f"Hola, **{s['name']}**" + (f" (DNI: {s['dni']})" if s["dni"] else ""))
+        st.markdown(f"**Hola, {s['name']}**" + (f" (DNI: {s['dni']})" if s["dni"] else ""))
 
         courses = load_courses_for_student(s["id"])
         if not courses:
@@ -109,29 +90,24 @@ if term:
             st.write(f"**Recargo (si corresponde):** $ {surcharge:.2f}")
             st.write(f"**Total a pagar:** $ {total:.2f}")
 
-            # Botón Mercado Pago
-            if mp_sdk and BASE_URL:
-                link = create_mp_preference(f"{s['id']}", total)
-                if link:
-                    st.markdown(
-                        f'<a href="{link}" target="_blank">'
-                        '<button style="margin-right:10px">Pagar con Mercado Pago</button>'
-                        '</a>', unsafe_allow_html=True)
-            else:
-                st.warning("⚠️ Mercado Pago no configurado en secrets.")
+            # — Botón Pago Demo —
+            demo_link = create_demo_link(f"{s['id']}", total)
+            st.markdown(
+                f'<a href="{demo_link}" target="_blank">'
+                '<button style="margin-right:10px">Simular Pago Demo</button>'
+                '</a>',
+                unsafe_allow_html=True
+            )
 
-            # Botón Homebanking
-            if CBU_ALIAS:
-                intent = (
-                    f"intent://pay?cbu={CBU_ALIAS}&amount={total:.2f}" 
-                    "#Intent;scheme=bankapp;package=com.bank.app;end"
-                )
-                st.markdown(
-                    f'<a href="{intent}">'
-                    '<button>Pagar con Homebanking</button>'
-                    '</a>', unsafe_allow_html=True)
-            else:
-                st.warning("⚠️ CBU_ALIAS no configurado en secrets.")
+            # — Botón Homebanking Demo —
+            intent = (
+                f"intent://pay?cbu={CBU_ALIAS}&amount={total:.2f}"
+                "#Intent;scheme=bankapp;package=com.bank.app;end"
+            )
+            st.markdown(
+                f'<a href="{intent}"><button>Pagar con Homebanking (Demo)</button></a>',
+                unsafe_allow_html=True
+            )
 
 
 
