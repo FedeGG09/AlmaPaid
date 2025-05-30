@@ -3,6 +3,8 @@ import streamlit as st
 import datetime
 import sqlite3
 import mercadopago
+import toml
+
 
 config = toml.load("streamlit/secrets.toml")
 MP_ACCESS_TOKEN = config.get("MP_ACCESS_TOKEN", "")
