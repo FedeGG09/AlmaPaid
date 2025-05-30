@@ -4,7 +4,7 @@ import datetime
 import sqlite3
 import mercadopago
 
-# --- CONFIGURACIÓN (leer de toml manual o de st.secrets) ---
+# --- CONFIGURACIÓN (leer de st.secrets o manualmente) ---
 MP_ACCESS_TOKEN = st.secrets.get("MP_ACCESS_TOKEN", "")
 CBU_ALIAS       = st.secrets.get("CBU_ALIAS", "")
 BASE_URL        = st.secrets.get("BASE_URL", "")
@@ -13,12 +13,12 @@ BASE_URL        = st.secrets.get("BASE_URL", "")
 st.image("logo.png", width=200)
 st.title("AlmaPaid – Pago de Talleres")
 
-# --- CONEXIÓN A BD ---
+# --- BD ---
 DB_PATH = "alma_paid.db"
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 conn.row_factory = sqlite3.Row
 
-# --- AUXILIARES BD ---
+# --- FUNCIONES BD ---
 def load_all_students():
     cur = conn.cursor()
     cur.execute("SELECT id, name, email, dni, status FROM students;")
@@ -45,11 +45,8 @@ mp_sdk = None
 if MP_ACCESS_TOKEN:
     mp_sdk = mercadopago.SDK(MP_ACCESS_TOKEN)
 
+# --- PREFERENCIA MP ---
 def create_mp_preference(ref: str, total: float):
-    """
-    Crea preferencia y devuelve el enlace de pago.
-    Toma init_point o sandbox_init_point según corresponda.
-    """
     payload = {
         "items": [{"title": f"Pago {ref}", "quantity":1, "unit_price": total}],
         "external_reference": ref,
@@ -57,12 +54,12 @@ def create_mp_preference(ref: str, total: float):
         "auto_return": "approved",
     }
     pref = mp_sdk.preference().create(payload)
+    # manejar sandbox y production
     resp = pref.get("response", {}) or {}
-    # Buscar init_point o sandbox_init_point
     link = resp.get("init_point") or resp.get("sandbox_init_point")
     if not link:
         st.error("No se pudo obtener el enlace de pago de Mercado Pago.")
-        st.write(resp)  # para debug en Logs
+        st.write(resp)
         return None
     return link
 
@@ -71,14 +68,14 @@ params = st.query_params
 if params.get("paid") and params.get("ref"):
     st.success("¡Pago recibido! Gracias por tu operación.")
 
-# --- INTERFAZ DE BÚSQUEDA Y PAGO ---
+# --- UI BÚSQUEDA Y PAGO ---
 term = st.text_input("Buscá por nombre, DNI, email o estado:")
 if term:
     term_l = term.lower()
     students = load_all_students()
     matches = []
     for s in students:
-        vals = [ str(s[col]).lower() for col in ("name","dni","email","status") if s[col] ]
+        vals = [str(s[col]).lower() for col in ("name","dni","email","status") if s[col]]
         if term_l in " ".join(vals):
             matches.append(s)
 
@@ -112,31 +109,27 @@ if term:
             st.write(f"**Recargo (si corresponde):** $ {surcharge:.2f}")
             st.write(f"**Total a pagar:** $ {total:.2f}")
 
-            # — Botón Mercado Pago —
+            # Botón Mercado Pago
             if mp_sdk and BASE_URL:
                 link = create_mp_preference(f"{s['id']}", total)
                 if link:
                     st.markdown(
                         f'<a href="{link}" target="_blank">'
                         '<button style="margin-right:10px">Pagar con Mercado Pago</button>'
-                        '</a>',
-                        unsafe_allow_html=True
-                    )
+                        '</a>', unsafe_allow_html=True)
             else:
                 st.warning("⚠️ Mercado Pago no configurado en secrets.")
 
-            # — Botón Homebanking —
+            # Botón Homebanking
             if CBU_ALIAS:
                 intent = (
-                    f"intent://pay?cbu={CBU_ALIAS}&amount={total:.2f}"
+                    f"intent://pay?cbu={CBU_ALIAS}&amount={total:.2f}" 
                     "#Intent;scheme=bankapp;package=com.bank.app;end"
                 )
                 st.markdown(
                     f'<a href="{intent}">'
                     '<button>Pagar con Homebanking</button>'
-                    '</a>',
-                    unsafe_allow_html=True
-                )
+                    '</a>', unsafe_allow_html=True)
             else:
                 st.warning("⚠️ CBU_ALIAS no configurado en secrets.")
 
