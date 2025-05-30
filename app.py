@@ -4,12 +4,10 @@ import datetime
 import sqlite3
 import mercadopago
 
-# --- CARGAR SECRETOS ---
-# Debes tener en .streamlit/secrets.toml o en Variables de Entorno:
-# MP_ACCESS_TOKEN, CBU_ALIAS, BASE_URL
-MP_ACCESS_TOKEN = st.secrets.get("MP_ACCESS_TOKEN", "")
-CBU_ALIAS       = st.secrets.get("CBU_ALIAS", "")
-BASE_URL        = st.secrets.get("BASE_URL", "")
+config = toml.load("streamlit/secrets.toml")
+MP_ACCESS_TOKEN = config.get("MP_ACCESS_TOKEN", "")
+CBU_ALIAS       = config.get("CBU_ALIAS", "")
+BASE_URL        = config.get("BASE_URL", "")
 
 # --- CONFIG DE PÁGINA ---
 st.set_page_config(page_title="AlmaPaid – Pago de Talleres", layout="centered")
