@@ -1,22 +1,23 @@
+import os
 import streamlit as st
 import datetime
-from dataclasses import dataclass
 import mercadopago
-import qrcode
-import io
 import sqlite3
-import difflib
 
 # --- CONFIGURACIÓN ---
 MP_ACCESS_TOKEN = st.secrets.get("MP_ACCESS_TOKEN")
 CBU_ALIAS       = st.secrets.get("CBU_ALIAS")
 BASE_URL        = st.secrets.get("BASE_URL")
 
+# --- OPCIONAL: verificar directorio de trabajo ---
+# st.write("Directorio actual:", os.getcwd())
+
 # --- LOGO ---
+# Coloca logo.png en la raíz del repo
 st.image("logo.png", width=200)
 st.title("AlmaPaid – Pago de Talleres")
 
-# --- DB CONNECTION ---
+# --- CONEXIÓN A BD ---
 conn = sqlite3.connect("alma_paid.db", check_same_thread=False)
 conn.row_factory = sqlite3.Row
 
@@ -26,10 +27,11 @@ def find_student(term: str):
     cur.execute("SELECT * FROM students")
     all_students = cur.fetchall()
     matches = []
+    term_lower = term.lower()
     for student in all_students:
-        # Concatenar todos los campos y buscar coincidencia parcial
-        joined = " ".join(str(v).lower() for v in student if v)
-        if term.lower() in joined:
+        # concatenar todos los campos en minúsculas (si no son None)
+        joined = " ".join(str(student[col]).lower() for col in student.keys() if student[col])
+        if term_lower in joined:
             matches.append(student)
     return matches
 
@@ -68,7 +70,7 @@ def create_mp_preference(dni: str, total: float):
 params = st.query_params
 if params.get("paid") and params.get("dni"):
     dni_paid = params["dni"][0]
-    st.success(f"¡Pago recibido! Gracias por tu pago, DNI: {dni_paid}")
+    st.success(f"¡Pago recibido! Gracias, DNI: {dni_paid}")
 
 # --- INTERFAZ DE BÚSQUEDA ---
 search_term = st.text_input("Buscá por nombre, DNI, email o teléfono:")
@@ -79,17 +81,17 @@ if search_term:
     elif len(matches) > 1:
         st.info("Se encontraron varias coincidencias:")
         for m in matches:
-            display = m['name'] or ""
-            if m['dni']:
-                display += f" – DNI: {m['dni']}"
-            if m['email']:
-                display += f" – Email: {m['email']}"
-            if m['phone']:
-                display += f" – Tel: {m['phone']}"
-            st.write(display)
+            line = m["name"] or ""
+            if m["dni"]:
+                line += f" – DNI: {m['dni']}"
+            if m["email"]:
+                line += f" – Email: {m['email']}"
+            if m["phone"]:
+                line += f" – Tel: {m['phone']}"
+            st.write(line)
     else:
         student = matches[0]
-        dni = student.get('dni')
+        dni = student["dni"] or ""
         display = f"Hola, **{student['name']}**"
         if dni:
             display += f" (DNI: {dni})"
@@ -101,9 +103,9 @@ if search_term:
         else:
             today = datetime.date.today()
             total, surcharge = calculate_fee(
-                enrollment['fee'],
-                enrollment['due_day'],
-                enrollment['late_pct'],
+                enrollment["fee"],
+                enrollment["due_day"],
+                enrollment["late_pct"],
                 today
             )
             st.write(f"**Monto base:** $ {enrollment['fee']:.2f}")
