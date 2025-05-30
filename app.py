@@ -1,9 +1,8 @@
 import os
 import streamlit as st
 import datetime
+import sqlite3
 import mercadopago
-
-from data.repository import SQLiteRepository
 
 # --- CONFIGURACIÓN ---
 MP_ACCESS_TOKEN = st.secrets.get("MP_ACCESS_TOKEN")
@@ -14,8 +13,37 @@ BASE_URL        = st.secrets.get("BASE_URL")
 st.image("logo.png", width=200)
 st.title("AlmaPaid – Pago de Talleres")
 
-# --- REPOSITORIO ---
-repo = SQLiteRepository()
+# --- CONEXIÓN A BD ---
+DB_PATH = "alma_paid.db"
+conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+conn.row_factory = sqlite3.Row
+
+# --- FUNCIONES AUXILIARES ---
+def load_all_students():
+    """Devuelve lista de sqlite3.Row con campos id, name, email, dni, status."""
+    cur = conn.cursor()
+    cur.execute("SELECT id, name, email, dni, status FROM students;")
+    return cur.fetchall()
+
+def load_courses_for_student(student_id: int):
+    """Devuelve lista de tuplas (title, monthly_fee) para un alumno."""
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT c.title, c.monthly_fee
+          FROM courses c
+          JOIN enrollments e ON e.course_id = c.id
+         WHERE e.student_id = ?
+    """, (student_id,))
+    return cur.fetchall()
+
+def calculate_due(subtotal: float, today: datetime.date):
+    """
+    Aplica recargo fijo de 2000 a partir del 10 de cada mes.
+    (Ajusta fecha de corte si prefieres otro día).
+    """
+    cutoff = datetime.date(today.year, today.month, 10)
+    surcharge = 2000.0 if today >= cutoff else 0.0
+    return surcharge, subtotal + surcharge
 
 # --- MERCADO PAGO SDK ---
 mp_sdk = mercadopago.SDK(MP_ACCESS_TOKEN) if MP_ACCESS_TOKEN else None
@@ -27,69 +55,79 @@ def create_mp_preference(ref: str, total: float):
         "back_urls": {"success": f"{BASE_URL}?ref={ref}&paid=true"},
         "auto_return": "approved",
     }
-    return mp_sdk.preference().create(payload)["response"]["init_point"]
+    resp = mp_sdk.preference().create(payload)
+    return resp["response"]["init_point"]
 
-# --- Pago retornado ---
-params = st.query_params
+# --- DETECTAR PAGO RETORNADO ---
+params = st.experimental_get_query_params()
 if params.get("paid") and params.get("ref"):
-    st.success("¡Pago recibido! Gracias.")
+    st.success("¡Pago recibido! Gracias por tu operación.")
 
-# --- Búsqueda de alumno ---
+# --- INTERFAZ DE BÚSQUEDA ---
 term = st.text_input("Buscá por nombre, DNI, email o estado:")
 if term:
-    # cargamos todos los estudiantes y filtramos por coincidencia parcial en cualquier campo
-    students = repo.list_students()
     term_l = term.lower()
-    matches = [
-        s for s in students
-        if term_l in s.name.lower()
-        or term_l in (s.email or "").lower()
-        or term_l in (s.dni or "").lower()
-        or term_l in (s.status or "").lower()
-    ]
+    students = load_all_students()
+    matches = []
+    for s in students:
+        # Concatenamos todos los campos y buscamos coincidencia parcial
+        vals = []
+        for col in ("name","dni","email","status"):
+            v = s[col]
+            if v:
+                vals.append(str(v).lower())
+        if term_l in " ".join(vals):
+            matches.append(s)
 
     if not matches:
-        st.warning("No se encontraron coincidencias.")
+        st.warning("No se encontraron alumnos con ese término.")
     elif len(matches) > 1:
         st.info("Se encontraron varias coincidencias:")
         for s in matches:
-            line = f"{s.name}"
-            if s.dni:   line += f" – DNI: {s.dni}"
-            if s.email: line += f" – Email: {s.email}"
-            if s.status:line += f" – Estado: {s.status}"
+            line = s["name"]
+            if s["dni"]:   line += f" – DNI: {s['dni']}"
+            if s["email"]: line += f" – Email: {s['email']}"
+            if s["status"]:line += f" – Estado: {s['status']}"
             st.write(line)
     else:
-        # único match
         s = matches[0]
-        st.write(f"Hola, **{s.name}**" + (f" (DNI: {s.dni})" if s.dni else ""))
-
-        # calculamos deuda mes actual
-        subtotal, surcharge, total = repo.calculate_due_for_student(s.dni)
-        if subtotal == 0 and surcharge == 0 and total == 0:
-            st.warning("No tiene cursos o DNI no registrado en la base.")
+        st.write(f"Hola, **{s['name']}**" + (f" (DNI: {s['dni']})" if s["dni"] else ""))
+        # Cargamos cursos y fees
+        courses = load_courses_for_student(s["id"])
+        if not courses:
+            st.warning("Este alumno no tiene cursos inscriptos.")
         else:
+            subtotal = sum(fee for _, fee in courses)
+            today = datetime.date.today()
+            surcharge, total = calculate_due(subtotal, today)
+
+            # Mostrar detalle de cada curso
+            st.markdown("**Detalle de cursos:**")
+            for title, fee in courses:
+                st.write(f"- {title}: $ {fee:.2f}")
+
             st.write(f"**Subtotal mensual:** $ {subtotal:.2f}")
-            st.write(f"**Recargo fijo (si aplica):** $ {surcharge:.2f}")
+            st.write(f"**Recargo (si corresponde):** $ {surcharge:.2f}")
             st.write(f"**Total a pagar:** $ {total:.2f}")
 
-            # botón Mercado Pago
+            # Botón Mercado Pago
             if mp_sdk and BASE_URL:
-                pref_link = create_mp_preference(s.dni, total)
+                link = create_mp_preference(f"{s['id']}", total)
                 st.markdown(
-                    f'<a href="{pref_link}" target="_blank"><button>Pagar con Mercado Pago</button></a>',
+                    f'<a href="{link}" target="_blank"><button style="margin-right:10px">Pagar con Mercado Pago</button></a>',
                     unsafe_allow_html=True
                 )
             else:
                 st.warning("⚠️ Mercado Pago no configurado en secrets.toml.")
 
-            # botón Homebanking
+            # Botón Homebanking
             if CBU_ALIAS:
-                intent_uri = (
+                intent = (
                     f"intent://pay?cbu={CBU_ALIAS}&amount={total:.2f}"
                     "#Intent;scheme=bankapp;package=com.bank.app;end"
                 )
                 st.markdown(
-                    f'<a href="{intent_uri}"><button>Pagar con Homebanking</button></a>',
+                    f'<a href="{intent}"><button>Pagar con Homebanking</button></a>',
                     unsafe_allow_html=True
                 )
             else:
