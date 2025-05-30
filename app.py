@@ -3,11 +3,15 @@ import streamlit as st
 import datetime
 import sqlite3
 import mercadopago
+import toml
+import streamlit as st
 
-# --- CONFIGURACIÓN ---
-MP_ACCESS_TOKEN = st.secrets.get("MP_ACCESS_TOKEN")
-CBU_ALIAS       = st.secrets.get("CBU_ALIAS")
-BASE_URL        = st.secrets.get("BASE_URL")
+# --- CARGAR SECRETS MANUALMENTE ---
+config = toml.load("streamlit/secrets.toml")
+MP_ACCESS_TOKEN = config.get("MP_ACCESS_TOKEN", "")
+CBU_ALIAS       = config.get("CBU_ALIAS", "")
+BASE_URL        = config.get("BASE_URL", "")
+
 
 # --- LOGO ---
 st.image("logo.png", width=200)
